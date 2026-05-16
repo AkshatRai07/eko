@@ -1,27 +1,12 @@
 diff --git a/pyproject.toml b/pyproject.toml
-index 3a96cffe..c9026452 100644
+index c2e71815..820933bd 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
-@@ -1,6 +1,20 @@
- [build-system]
--requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning"]
--build-backend = "poetry_dynamic_versioning.backend"
-+requires = ["maturin>=0.14.8,<0.15", "poetry-dynamic-versioning"]
-+build-backend = "maturin"
-+
-+[project]
-+name = "eko"
-+requires-python = ">=3.10"
-+classifiers = [
-+  "Programming Language :: Rust",
-+  "Programming Language :: Python :: Implementation :: CPython",
-+  "Programming Language :: Python :: Implementation :: PyPy",
-+]
-+version = "0.0.0"
-+
-+[tool.maturin]
-+manifest-path = "crates/eko/Cargo.toml"
-+python-packages = ["ekomark", "ekobox"]
-
- [tool.poetry]
- name = "eko"
+@@ -47,6 +47,7 @@ PyYAML = "^6.0"
+ lz4 = "^4.0.2"
+ numba = "^0.61.0"
+ packaging = "^24.1"
++eko-rs = { path = "crates/eko/", develop = true }
+ # ekomark
+ banana-hep = { version = "^0.6.16", optional = true }
+ sqlalchemy = { version = "^1.4.21", optional = true }
