@@ -38,6 +38,8 @@ def ker_exact(a0, a1, order, nf):
         .. math::
             k_{exact} = e^{-\int_{a_s(\mu_{h,0}^2)}^{a_s(\mu^2)}\gamma_m(a_s)/ \beta(a_s)da_s}
     """
+    a0 = float(np.asarray(a0).item())
+    a1 = float(np.asarray(a1).item())
     b_vec = [beta_qcd((2, 0), nf)]
     g_vec = [gamma(1, nf)]
     if order[0] >= 2:
@@ -260,7 +262,7 @@ def solve(m2_ref, q2m_ref, strong_coupling, nf_ref, xif2):
     msbar_mass = optimize.fsolve(
         rge, q2m_ref, args=(q2m_ref, strong_coupling, xif2, nf_ref)
     )
-    return float(msbar_mass)
+    return float(np.asarray(msbar_mass).item())
 
 
 def evolve(

@@ -522,10 +522,12 @@ class Couplings:
         def rge(_t, a, b_vec):
             rge = -(a**2) * (np.sum([a**k * b for k, b in enumerate(b_vec)]))
             return rge
+        
+        beta0_u = float(np.asarray(beta0 * u).item())
 
         res = scipy.integrate.solve_ivp(
             rge,
-            (0, beta0 * u),
+            (0, beta0_u),
             (a_ref,),
             args=[b_vec],
             method=method,
@@ -559,7 +561,7 @@ class Couplings:
 
         if self.order == (1, 0):
             return couplings_expanded_fixed_alphaem(
-                self.order, a_ref, nf, scale_from, float(scale_to)
+                self.order, a_ref, nf, scale_from, float(np.asarray(scale_to).item())
             )
 
         beta_qcd_vec = [beta_qcd((2, 0), nf)]
@@ -694,7 +696,7 @@ class Couplings:
         numpy.ndarray
             couplings at target scale :math:`a(Q^2)`
         """
-        key = (float(a_ref[0]), float(a_ref[1]), nf, nl, scale_from, float(scale_to))
+        key = (float(a_ref[0].item()), float(a_ref[1].item()), nf, nl, scale_from, float(np.asarray(scale_to).item()))
         try:
             return self.cache[key].copy()
         except KeyError:
@@ -721,7 +723,7 @@ class Couplings:
                     )
                 else:
                     a_new = couplings_expanded_fixed_alphaem(
-                        self.order, a_ref.astype(float), nf, scale_from, float(scale_to)
+                        self.order, a_ref.astype(float), nf, scale_from, float(np.asarray(scale_to).item())
                     )
             self.cache[key] = a_new.copy()
             return a_new
