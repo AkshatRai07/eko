@@ -45,7 +45,7 @@ The necessary changes in the current architecture for this to take place are:
 
 ## 2. User entry point
 
-**File:** `src/eko/runner/managed.py` — `solve(theory, operator, path)`
+**File:** `src/eko/runner/managed.py` : `solve(theory, operator, path)`
 
 This is the single public function users call. It loads the two cards (`TheoryCard`, `OperatorCard`), builds an `Atlas`, and delegates to `runner/parts.py` for each segment and matching.
 
@@ -67,3 +67,41 @@ User
                                          └─ quad_ker  (Python/Numba path)
                                             rust_quad_ker (Rust path)
 ```
+
+---
+
+## 3. Operator vs OperatorMatrixElement
+
+After the path is decomposed into segments and matchings by the `Atlas`, two
+different compute objects handle the integration:
+
+| Class | File | Purpose |
+| --- | --- | --- |
+| `Operator` | `evolution_operator/__init__.py` | DGLAP evolution between two scales within a fixed-nf region |
+| `OperatorMatrixElement` | `evolution_operator/operator_matrix_element.py` | Heavy-quark matching condition at a flavor threshold |
+
+`OperatorMatrixElement` inherits `Operator` and they share the same `integrate()` / `run_op_integration()` machinery; they differ only in which kernel function and labels they use.
+
+---
+
+## 4. Integration loops
+
+### 4.1 Outer loop
+
+`Operator.integrate()` iterates over every point `(k, logx)` in the output x-grid. Each point is independent and hence the problem is embarrassingly parallel (currently via `multiprocessing.Pool`).
+
+```python
+# evolution_operator/__init__.py  (line 997)
+with pool:
+    results = pool.map(self.run_op_integration, log_grid)
+```
+
+### 4.2 Inner loop
+
+Inside `run_op_integration`, for each target point the code iterates:
+
+1. **Source basis function `j`** — each `BasisFunction` carries the polynomial coefficients for one source x-node (`areas_representation`).
+2. **Flavor label** — a `(mode0, mode1)` pair identifying which element of the operator matrix is being computed (e.g. `(100, 100)` for quark-singlet → quark-singlet).
+
+For each `(j, label)` pair a separate `scipy.integrate.quad` call is made.
+I had a thought to parallelize this (i.e. remove the two loops), but the thing is python has GIL, and outer loop is already parallelized, so it may not improve / might deteriorate the performance. Also, we would have to create a separate cfg for each process, thus increasing the memory usage.
