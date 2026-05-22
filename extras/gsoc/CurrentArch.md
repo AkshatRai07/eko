@@ -105,3 +105,65 @@ Inside `run_op_integration`, for each target point the code iterates:
 
 For each `(j, label)` pair a separate `scipy.integrate.quad` call is made.
 I had a thought to parallelize this (i.e. remove the two loops), but the thing is python has GIL, and outer loop is already parallelized, so it may not improve / might deteriorate the performance. Also, we would have to create a separate cfg for each process, thus increasing the memory usage.
+
+---
+
+## 5. scipy.integrate.quad
+
+### 5.1 quad_ker
+
+```text
+scipy.integrate.quad(quad_ker_partial, 0.5, 1-ε)
+       ↓  calls func at each quadrature node
+quad_ker(u, order, mode0, ...) [quad_ker.py, @nb.njit]
+       ↓
+QuadKerBase  →  integrand
+       ↓
+quad_ker_qcd / quad_ker_qed  →  anomalous dimensions via ekore
+       ↓
+kernels/singlet.py | non_singlet.py | ...  →  evolution operator matrix
+       ↓
+np.real(ker * integrand)  →  returned float
+```
+
+`quad_ker` is decorated `@nb.njit`, meaning Numba compiles it to machine code.  
+`scipy` calls the resulting function through Python's normal calling convention on every quadrature node this carries Python overhead even with Numba.
+
+### 5.2 rust_quad_ker
+
+```text
+scipy.integrate.quad(LowLevelCallable(rust_quad_ker, &cfg), 0.5, 1-ε)
+       ↓  scipy's Fortran/C backend calls the C function pointer directly
+rust_quad_ker(u, *args)  [crates/eko/src/lib.rs]
+       ↓
+TalbotPath  →  Mellin contour + Jacobian
+       ↓
+ekore Rust  →  anomalous dimensions
+       ↓
+Python callback  →  cb_quad_ker_qcd / cb_quad_ker_qed
+       ↓
+Rust
+       ↓
+f64 returned to scipy
+```
+
+**Current transitional state:** `scipy → Rust → Python callback → Rust → scipy`
+
+**Target state:** `scipy → Rust → Rust → scipy` (no Python in the hot loop)
+
+### Why LowLevelCallable, not PyO3?
+
+`scipy.integrate.quad` accepts a `LowLevelCallable`, a raw C function pointer paired with a user-data pointer.  
+When given an LLC, scipy's underlying Fortran/C QUADPACK routines call the function pointer directly, without ever entering the Python runtime.  
+There is no GIL acquisition, no Python frame allocation, and no argument marshalling through Python objects on each of the ~100–10000 evaluations per integral.  
+
+PyO3 wraps Rust functions as ordinary Python callables. If the integration
+kernel were exposed via PyO3, the call chain on every point would be:
+
+```text
+scipy Fortran  →  acquire GIL  →  Python call dispatch  →  PyO3 wrapper  →  Rust  →  release GIL  →  scipy Fortran
+```
+
+This overhead per node dominates at the scale of `O(grid_size²) × O(flavors) × O(100)` calls made in a typical EKO run.
+
+**Conclusion:** PyO3 is the right tool for the Python-Rust API boundary (configuration, result retrieval). LLC is the right tool for the integration loop. The architecture uses both in their appropriate roles.
