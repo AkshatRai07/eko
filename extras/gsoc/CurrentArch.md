@@ -40,3 +40,30 @@ The necessary changes in the current architecture for this to take place are:
 - Add eko-rs as a dependency in pyproject.toml.
 - Add another .github/workflows file which publish the crates to PyPI on commit.
 - The file will take care of building, publishing using maturin. The version published will be taken care by `crates/bump-versions.py`.
+
+---
+
+## 2. User entry point
+
+**File:** `src/eko/runner/managed.py` — `solve(theory, operator, path)`
+
+This is the single public function users call. It loads the two cards (`TheoryCard`, `OperatorCard`), builds an `Atlas`, and delegates to `runner/parts.py` for each segment and matching.
+
+### High-level data flow
+
+```text
+User
+ └─ runner.solve()                         [managed.py]
+     └─ for each evolution segment / matching
+         ├─ Operator.compute()             [evolution_operator/__init__.py]
+         └─ OperatorMatrixElement.compute() [operator_matrix_element.py]
+             └─ Operator.integrate()
+                 └─ for each target x-grid point
+                     └─ run_op_integration()
+                         └─ for each source basis function j
+                             └─ for each flavor label
+                                 └─ scipy.integrate.quad(func, 0.5, 1-ε)
+                                     └─ func called O(100) times per quad
+                                         └─ quad_ker  (Python/Numba path)
+                                            rust_quad_ker (Rust path)
+```
