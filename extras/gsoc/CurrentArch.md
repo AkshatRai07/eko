@@ -167,3 +167,100 @@ scipy Fortran  →  acquire GIL  →  Python call dispatch  →  PyO3 wrapper  �
 This overhead per node dominates at the scale of `O(grid_size²) × O(flavors) × O(100)` calls made in a typical EKO run.
 
 **Conclusion:** PyO3 is the right tool for the Python-Rust API boundary (configuration, result retrieval). LLC is the right tool for the integration loop. The architecture uses both in their appropriate roles.
+
+---
+
+## 6. ekore
+
+I am not sure what you want me to document exactly, so I'll give my best assumptions.
+
+### 6.1 access
+
+In python workflow, the ekore library is a dependency of several files in the eko folder.  
+In rust workflow, the ekore library is completely in Rust. There's a lib.rs which acts as a bridge between python and rust. All the integrands which are to be calculated and handled pretty neatly using `cfg` on the python side, and let Rust decide what the integrand should be based on the config. I would like to keep this system as it is.
+
+### 6.2 bottom
+
+I am not sure what this meant. Maybe that I got to check and document if python to rust is implemented correctly or not (i.e. any mistypings), or document how much of the functions are converted and what's remaining. Please do provide more info on this.
+
+---
+
+## 7. Linear algebra and interpolation
+
+### 7.1 Linear algebra for the singlet evolution solution
+
+The non-singlet sector is a scalar equation, its solution is a scalar exponential, no matrix operations needed.
+
+The singlet sector is different. Quarks and gluons mix under evolution, so the singlet DGLAP equation is a 2×2 matrix ODE:
+
+$$\frac{d}{d(\ln \mu^2)} \begin{bmatrix} \Sigma \\ g \end{bmatrix} = \begin{bmatrix} \gamma_{qq} & \gamma_{qg} \\ \gamma_{gq} & \gamma_{gg} \end{bmatrix} \begin{bmatrix} \Sigma \\ g \end{bmatrix}$$
+
+Solving this is the job of `kernels/singlet.py`, entered via `s.dispatcher(...)`. The dispatcher selects one of several solution strategies depending on `method` and `order`. Each uses different linear algebra. I won't go into detail as to what all linear algebra the functions do.
+
+Thing to note is every method ultimately calls `ekore.anomalous_dimensions.exp_matrix_2D`, which computes a 2×2 complex matrix exponential by diagonalisation: find eigenvalues λ₊, λ₋ and projectors e₊, e₋, then:
+
+$$\exp(M) = \exp(\lambda_{+}) \cdot e_{+} + \exp(\lambda_{-}) \cdot e_{-}$$
+
+### 7.2 Interpolation polynomial
+
+The inverse Mellin transform that produces one entry `E[i][j]` of the operator matrix is:
+
+$$E[i][j] = \int E(N) \cdot p_j(N) \cdot \text{jac}(u) du$$
+
+Here, $p_j(N)$ is the Mellin transform of the $j$-th basis polynomial evaluated at complex point $N$. This evaluation happens on every single call to `quad_ker` (~100 times per integral).
+
+EKO works on a discrete $x$-grid using piecewise Lagrange basis polynomials. These are pre-computed once during setup, and their coefficients are stored in a compact flat float array (`areas_representation`).
+
+During the integral, `evaluate_grid` computes $p_j(N)$ analytically piece by piece. Depending on the `is_log` flag, it delegates to one of two functions:
+
+- **`log_evaluate_Nx`** for logarithmic interpolation.
+- **`evaluate_Nx`** for linear interpolation.
+
+I won't go into detail on the exact formulas these functions execute.
+
+**What stays in Python vs what must move to Rust:**
+
+The architecture splits into two layers:
+
+1. **Setup (Stays in Python):** Classes like `BasisFunction`, `XGrid`, and `InterpolatorDispatcher` run once at startup to build the `areas_representation` array.
+2. **Hot path (Must move to Rust):** `evaluate_grid`, `log_evaluate_Nx`, and `evaluate_Nx`. Once the coefficient array exists and is passed into the kernel, the Python class hierarchy is never touched again during integration.
+
+## 8. Versioning
+
+The project has two parallel version streams, the Python package and the Rust crates.
+
+### 8.1 poetry-dynamic-versioning
+
+```toml
+# pyproject.toml
+[build-system]
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning"]
+build-backend = "poetry_dynamic_versioning.backend"
+
+[tool.poetry-dynamic-versioning]
+format-jinja = "{% if distance == 0 %}{{ base }}{% else %}0.0.0-post.{{ distance }}+{{ commit }}{% endif %}"
+```
+
+`poetry-dynamic-versioning` reads the current git tag at build time and injects it into the package metadata. No `version` field in `pyproject.toml` is ever manually edited, it stays as the placeholder `"0.0.0"`. On a tagged commit the version becomes the tag (e.g. `1.2.0`); on an untagged commit it becomes `0.0.0-post.N+<hash>` so development builds are always distinguishable.
+
+The version string is also written into three Python source files at build time via substitution rules:
+
+```toml
+[tool.poetry-dynamic-versioning.substitution]
+files = ["src/eko/version.py", "src/ekomark/version.py", "src/ekobox/version.py"]
+```
+
+### 8.2 bump-versions.py
+
+The Rust workspace and all crates inside `crates/` have their own `version` fields in their respective `Cargo.toml` files. They must be bumped manually before a release using:
+
+```bash
+poe bump-version   # runs: python crates/bump-versions.py $(git describe --tags)
+```
+
+`bump-versions.py` does two things:
+
+1. Sets `workspace.package.version` to the new version.
+2. Updates the `version` field of any internal cross-dependencies (e.g. ekore inside eko's dependencies) to the same version string.
+
+The script strips the leading `v` from the git tag since Cargo does not use the `v` prefix.
