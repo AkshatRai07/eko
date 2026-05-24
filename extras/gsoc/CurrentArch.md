@@ -264,3 +264,49 @@ poe bump-version   # runs: python crates/bump-versions.py $(git describe --tags)
 2. Updates the `version` field of any internal cross-dependencies (e.g. ekore inside eko's dependencies) to the same version string.
 
 The script strips the leading `v` from the git tag since Cargo does not use the `v` prefix.
+
+---
+
+## 10. Files targeted for Rust conversion (GSoC)
+
+The following files contain logic that currently runs inside or is directly called by the integration callback. They must be ported to Rust. Files are listed in recommended porting order (each row depends on those above it).
+
+### Pure arithmetic, no matrix ops (port first)
+
+| File | What it contains | Rust notes |
+| --- | --- | --- |
+| `src/eko/constants.py` | Physical constants | Already ported to Rust |
+| `src/eko/beta.py` | QCD/QED beta function coefficients | Tuple, `match (k.0, k.1)`, clean 1:1 port |
+| `src/eko/kernels/evolution_integrals.py` | Scalar Mellin integrals | `num::Complex` arithmetic, no external deps |
+| `src/eko/kernels/as4_evolution_integrals.py` | N3LO scalar integrals | Same, complex sqrt/arctan via `num::Complex` |
+| `src/eko/scale_variations/exponentiated.py` | In-place gamma variation | Needs `beta.rs`, array slicing via `ndarray` |
+| `src/ekore/anomalous_dimensions/__init__.py` | `exp_matrix_2D`, `exp_matrix` | `exp_matrix_2D` is pure arithmetic, `exp_matrix` needs nalgebra |
+
+### Matrix operations (port second)
+
+| File | What it contains | Rust notes |
+| --- | --- | --- |
+| `src/eko/scale_variations/expanded.py` | Scalar + 2D/4D matrix sv kernels | Generic dispatch over dim=2 and dim=4 |
+| `src/eko/kernels/non_singlet.py` | Non-singlet evolution dispatcher | No matrix ops, nested `match` on `EvoMethods × order` |
+| `src/eko/kernels/non_singlet_qed.py` | QED non-singlet | `np.geomspace` → manual `exp(linspace(…))`, 2D dot product |
+| `src/eko/kernels/singlet_qed.py` | QED singlet iterate | Requires `exp_matrix` for the 4×4 QED case, `exp_matrix_2D` for the 2×2 QCD singlet case, const generics for dim |
+| `src/eko/kernels/valence_qed.py` | Thin QED valence dispatcher | ~10 lines once `singlet_qed.rs` exists |
+
+### Most complex (port last)
+
+| File | What it contains | Rust notes |
+| --- | --- | --- |
+| `src/eko/kernels/singlet.py` | Full singlet: iterate, perturbative, truncated, decompose | `np.linalg.inv` → `nalgebra`, rank-3 complex array `(k,2,2)` with runtime `k` |
+| `src/eko/interpolation.py` | **Only** `evaluate_grid`, `log_evaluate_Nx`, `evaluate_Nx` | `math.gamma` → `libm::tgamma`, rest of file stays Python |
+| `src/eko/evolution_operator/quad_ker.py` | `cb_quad_ker_qcd`, `cb_quad_ker_qed`, `cb_quad_ker_ome` | The callbacks themselves, port last once all above exist |
+
+### Files that stay in Python (do not port)
+
+| File | Reason |
+| --- | --- |
+| `src/eko/kernels/__init__.py` | `EvoMethods` enum → already `method_num: u8` in `QuadArgs` |
+| `src/eko/scale_variations/__init__.py` | `Modes` enum → already `sv_mode_num: u8` in `QuadArgs` |
+| `src/eko/io/types.py` | Config type aliases, never on hot path |
+| `src/eko/io/dictlike.py` | Serialisation framework, Python-only concern |
+| `src/eko/quantities/heavy_quarks.py` | Config data container, not in hot path |
+| `src/eko/matchings.py` | Orchestration stays Python, `lepton_number` is NOT in Rust. Inline in the QED callback as `if mu2_to > MTAU.powi(2) { 3 } else { 2 } |
