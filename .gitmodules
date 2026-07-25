@@ -1,0 +1,3 @@
+[submodule "extern/libome"]
+	path = extern/libome
+	url = https://gitlab.com/libome/libome
